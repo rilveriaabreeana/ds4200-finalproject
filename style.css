@@ -42,7 +42,8 @@ a:hover {
 }
 
 .container {
-    width: min(92%, var(--max-widtth));
+    width: 90%;
+    max-width: 1100px;
     margin: 0 auto;
 }
 

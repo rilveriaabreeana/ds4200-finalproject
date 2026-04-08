@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Factor Connection Plot</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+  <style>
+    body { font-family: sans-serif; background: #fff; margin: 0; padding: 20px; }
+    h2 { font-size: 16px; margin-bottom: 4px; }
+    .subtitle { font-size: 12px; color: #666; margin-bottom: 16px; }
+    .controls { margin-bottom: 16px; }
+    button {
+      margin-right: 8px; padding: 6px 14px; border: 1px solid #ccc;
+      border-radius: 4px; cursor: pointer; font-size: 13px; background: #f5f5f5;
+    }
+    button.active { background: #3a8c5c; color: white; border-color: #3a8c5c; }
+    .tooltip {
+      position: absolute; background: rgba(0,0,0,0.75); color: #fff;
+      padding: 6px 10px; border-radius: 4px; font-size: 12px;
+      pointer-events: none; opacity: 0; transition: opacity 0.2s;
+    }
+  </style>
+</head>
+<body>
+<h2>Co-occurrence of Socioeconomic Factors Among Students</h2>
+<p class="subtitle">Arc thickness = number of students sharing both factors | Toggle by score group</p>
+<div class="controls">
+  <button id="btn-high" class="active" onclick="update('high')">High Scorers (≥70)</button>
+  <button id="btn-low" onclick="update('low')">Low Scorers (&lt;70)</button>
+</div>
+<svg id="chart"></svg>
+<div class="tooltip" id="tooltip"></div>
+
+<script>
+const data = {
+  high: [
+    { source: "High Income",        target: "Has Internet",       value: 347 },
+    { source: "High Income",        target: "High Resources",     value: 155 },
+    { source: "High Income",        target: "High Parental Inv.", value: 139 },
+    { source: "High Income",        target: "Low Parental Inv.",  value: 62  },
+    { source: "High Income",        target: "Private School",     value: 102 },
+    { source: "High Income",        target: "Public School",      value: 271 },
+    { source: "Low Income",         target: "Has Internet",       value: 539 },
+    { source: "Low Income",         target: "High Resources",     value: 240 },
+    { source: "Low Income",         target: "Low Resources",      value: 79  },
+    { source: "Low Income",         target: "High Parental Inv.", value: 209 },
+    { source: "Low Income",         target: "Low Parental Inv.",  value: 90  },
+    { source: "Low Income",         target: "Private School",     value: 181 },
+    { source: "Low Income",         target: "Public School",      value: 384 },
+    { source: "Has Internet",       target: "High Resources",     value: 639 },
+    { source: "Has Internet",       target: "Low Resources",      value: 197 },
+    { source: "Has Internet",       target: "High Parental Inv.", value: 576 },
+    { source: "Has Internet",       target: "Low Parental Inv.",  value: 213 },
+    { source: "Has Internet",       target: "Private School",     value: 473 },
+    { source: "Has Internet",       target: "Public School",      value: 788 },
+    { source: "High Parental Inv.", target: "Private School",     value: 404 },
+    { source: "High Parental Inv.", target: "Public School",      value: 895 },
+    { source: "Low Parental Inv.",  target: "Private School",     value: 320 },
+    { source: "Low Parental Inv.",  target: "Public School",      value: 788 },
+  ],
+  low: [
+    { source: "High Income",        target: "Has Internet",       value: 198 },
+    { source: "High Income",        target: "High Resources",     value: 89  },
+    { source: "High Income",        target: "High Parental Inv.", value: 76  },
+    { source: "High Income",        target: "Public School",      value: 152 },
+    { source: "Low Income",         target: "Has Internet",       value: 312 },
+    { source: "Low Income",         target: "High Resources",     value: 134 },
+    { source: "Low Income",         target: "Low Resources",      value: 98  },
+    { source: "Low Income",         target: "High Parental Inv.", value: 118 },
+    { source: "Low Income",         target: "Low Parental Inv.",  value: 87  },
+    { source: "Low Income",         target: "Public School",      value: 298 },
+    { source: "Has Internet",       target: "High Resources",     value: 378 },
+    { source: "Has Internet",       target: "Low Resources",      value: 201 },
+    { source: "Has Internet",       target: "High Parental Inv.", value: 334 },
+    { source: "Has Internet",       target: "Low Parental Inv.",  value: 198 },
+    { source: "Has Internet",       target: "Public School",      value: 567 },
+    { source: "High Parental Inv.", target: "Public School",      value: 512 },
+    { source: "Low Parental Inv.",  target: "Public School",      value: 445 },
+  ]
+};
+
+const width = 860, height = 480, margin = 40;
+const svg = d3.select("#chart").attr("width", width).attr("height", height);
+const tooltip = d3.select("#tooltip");
+
+const nodeNames = [...new Set([
+  ...data.high.flatMap(d => [d.source, d.target]),
+  ...data.low.flatMap(d => [d.source, d.target]),
+])];
+
+const x = d3.scalePoint()
+  .domain(nodeNames)
+  .range([margin + 40, width - margin - 40])
+  .padding(0.4);
+
+const cy = height * 0.68;
+
+const colorMap = {
+  "High Income":        "#3a8c5c",
+  "Low Income":         "#e05c5c",
+  "Has Internet":       "#3a8c5c",
+  "No Internet":        "#e05c5c",
+  "High Resources":     "#3a8c5c",
+  "Low Resources":      "#e05c5c",
+  "High Parental Inv.": "#3a8c5c",
+  "Low Parental Inv.":  "#e05c5c",
+  "Private School":     "#3a8c5c",
+  "Public School":      "#f0a500",
+};
+
+const arcGroup = svg.append("g");
+const nodeGroup = svg.append("g");
+
+nodeNames.forEach(name => {
+  nodeGroup.append("circle")
+    .attr("cx", x(name)).attr("cy", cy)
+    .attr("r", 9)
+    .attr("fill", colorMap[name] || "#aaa")
+    .attr("stroke", "#fff").attr("stroke-width", 2);
+
+  nodeGroup.append("text")
+    .attr("x", x(name)).attr("y", cy + 24)
+    .attr("text-anchor", "middle")
+    .attr("font-size", 10.5)
+    .attr("fill", "#333")
+    .text(name);
+});
+
+const legendData = [
+  { label: "Advantage factor", color: "#3a8c5c" },
+  { label: "Disadvantage factor", color: "#e05c5c" },
+  { label: "Public School", color: "#f0a500" },
+];
+const legend = svg.append("g").attr("transform", `translate(${margin}, 16)`);
+legendData.forEach((d, i) => {
+  legend.append("circle").attr("cx", i * 190).attr("cy", 0).attr("r", 7).attr("fill", d.color);
+  legend.append("text").attr("x", i * 190 + 14).attr("y", 4).attr("font-size", 11).attr("fill", "#444").text(d.label);
+});
+
+function drawArcs(links) {
+  arcGroup.selectAll("*").remove();
+  const maxVal = d3.max(links, d => d.value);
+  const strokeScale = d3.scaleLinear().domain([0, maxVal]).range([1, 14]);
+
+  links.forEach(d => {
+    const x1 = x(d.source), x2 = x(d.target);
+    const dx = Math.abs(x2 - x1);
+    const arcHeight = dx * 0.42;
+    const path = `M${x1},${cy} C${x1},${cy - arcHeight} ${x2},${cy - arcHeight} ${x2},${cy}`;
+
+    arcGroup.append("path")
+      .attr("d", path)
+      .attr("fill", "none")
+      .attr("stroke", "#888")
+      .attr("stroke-width", strokeScale(d.value))
+      .attr("stroke-opacity", 0.45)
+      .on("mouseover", function(event) {
+        d3.select(this).attr("stroke", "#222").attr("stroke-opacity", 1);
+        tooltip.style("opacity", 1)
+          .html(`<strong>${d.source}</strong> ↔ <strong>${d.target}</strong><br/>Students: ${d.value.toLocaleString()}`);
+      })
+      .on("mousemove", function(event) {
+        tooltip.style("left", (event.pageX + 12) + "px").style("top", (event.pageY - 28) + "px");
+      })
+      .on("mouseout", function() {
+        d3.select(this).attr("stroke", "#888").attr("stroke-opacity", 0.45);
+        tooltip.style("opacity", 0);
+      });
+  });
+}
+
+drawArcs(data.high);
+
+window.update = function(group) {
+  drawArcs(data[group]);
+  d3.select("#btn-high").classed("active", group === "high");
+  d3.select("#btn-low").classed("active", group === "low");
+};
+</script>
+</body>
+</html>
