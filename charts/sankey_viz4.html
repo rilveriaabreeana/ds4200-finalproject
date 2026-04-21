@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Sankey – Co-occurrence of Socioeconomic Factors</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Georgia, serif; background: #fff; padding: 24px; color: #222; }
+    h2 { font-size: 15px; font-weight: bold; margin-bottom: 3px; }
+    .subtitle { font-size: 11.5px; color: #666; margin-bottom: 14px; }
+    .controls { margin-bottom: 18px; display: flex; gap: 8px; }
+    button {
+      padding: 6px 16px; border: 1px solid #ccc; border-radius: 4px;
+      cursor: pointer; font-size: 13px; font-family: Georgia, serif;
+      background: #f5f5f5; transition: all 0.15s;
+    }
+    button.active { background: #3a8c5c; color: white; border-color: #3a8c5c; }
+    .legend { display: flex; gap: 24px; margin-bottom: 16px; align-items: center; flex-wrap: wrap; }
+    .legend-item { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: #444; }
+    .legend-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+    .tooltip {
+      position: fixed; background: rgba(20,20,20,0.88); color: #fff;
+      padding: 7px 11px; border-radius: 5px; font-size: 12px; font-family: Georgia, serif;
+      pointer-events: none; opacity: 0; transition: opacity 0.15s; max-width: 220px;
+      line-height: 1.5;
+    }
+    #chart { display: block; }
+  </style>
+</head>
+<body>
+
+<h2>Co-occurrence of Socioeconomic Factors Among Students</h2>
+<p class="subtitle">Flow width = number of students sharing both factors | Toggle by score group</p>
+
+<div class="controls">
+  <button id="btn-high" class="active" onclick="update('high')">High Scorers (≥70)</button>
+  <button id="btn-low" onclick="update('low')">Low Scorers (&lt;70)</button>
+</div>
+
+<div class="legend">
+  <div class="legend-item"><div class="legend-dot" style="background:#3a8c5c"></div> Advantage factor</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#e05c5c"></div> Disadvantage factor</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#f0a500"></div> School Type (neutral)</div>
+</div>
+
+<svg id="chart"></svg>
+<div class="tooltip" id="tooltip"></div>
+
+<script>
+// ── DATA (same as arc diagram) ──────────────────────────────────────────────
+const raw = {
+  high: [
+    { source: "High Income",        target: "Has Internet",       value: 347 },
+    { source: "High Income",        target: "High Resources",     value: 155 },
+    { source: "High Income",        target: "High Parental Inv.", value: 139 },
+    { source: "High Income",        target: "Low Parental Inv.",  value: 62  },
+    { source: "High Income",        target: "Private School",     value: 102 },
+    { source: "High Income",        target: "Public School",      value: 271 },
+    { source: "Low Income",         target: "Has Internet",       value: 539 },
+    { source: "Low Income",         target: "High Resources",     value: 240 },
+    { source: "Low Income",         target: "Low Resources",      value: 79  },
+    { source: "Low Income",         target: "High Parental Inv.", value: 209 },
+    { source: "Low Income",         target: "Low Parental Inv.",  value: 90  },
+    { source: "Low Income",         target: "Private School",     value: 181 },
+    { source: "Low Income",         target: "Public School",      value: 384 },
+    { source: "Has Internet",       target: "High Resources",     value: 639 },
+    { source: "Has Internet",       target: "Low Resources",      value: 197 },
+    { source: "Has Internet",       target: "High Parental Inv.", value: 576 },
+    { source: "Has Internet",       target: "Low Parental Inv.",  value: 213 },
+    { source: "Has Internet",       target: "Private School",     value: 473 },
+    { source: "Has Internet",       target: "Public School",      value: 788 },
+    { source: "High Parental Inv.", target: "Private School",     value: 404 },
+    { source: "High Parental Inv.", target: "Public School",      value: 895 },
+    { source: "Low Parental Inv.",  target: "Private School",     value: 320 },
+    { source: "Low Parental Inv.",  target: "Public School",      value: 788 },
+  ],
+  low: [
+    { source: "High Income",        target: "Has Internet",       value: 198 },
+    { source: "High Income",        target: "High Resources",     value: 89  },
+    { source: "High Income",        target: "High Parental Inv.", value: 76  },
+    { source: "High Income",        target: "Public School",      value: 152 },
+    { source: "Low Income",         target: "Has Internet",       value: 312 },
+    { source: "Low Income",         target: "High Resources",     value: 134 },
+    { source: "Low Income",         target: "Low Resources",      value: 98  },
+    { source: "Low Income",         target: "High Parental Inv.", value: 118 },
+    { source: "Low Income",         target: "Low Parental Inv.",  value: 87  },
+    { source: "Low Income",         target: "Public School",      value: 298 },
+    { source: "Has Internet",       target: "High Resources",     value: 378 },
+    { source: "Has Internet",       target: "Low Resources",      value: 201 },
+    { source: "Has Internet",       target: "High Parental Inv.", value: 334 },
+    { source: "Has Internet",       target: "Low Parental Inv.",  value: 198 },
+    { source: "Has Internet",       target: "Public School",      value: 567 },
+    { source: "High Parental Inv.", target: "Public School",      value: 512 },
+    { source: "Low Parental Inv.",  target: "Public School",      value: 445 },
+  ]
+};
+
+// ── LAYOUT ─────────────────────────────────────────────────────────────────
+// Teacher feedback: multipartite — advantage left, school type middle, disadvantage right
+// We treat this as a 3-column Sankey with fixed column assignment per node.
+
+const COL = {
+  "High Income":        0,
+  "Has Internet":       0,
+  "High Resources":     0,
+  "High Parental Inv.": 0,
+  "Private School":     1,
+  "Public School":      1,
+  "Low Income":         2,
+  "No Internet":        2,
+  "Low Resources":      2,
+  "Low Parental Inv.":  2,
+};
+
+const NODE_COLOR = {
+  "High Income":        "#3a8c5c",
+  "Has Internet":       "#3a8c5c",
+  "High Resources":     "#3a8c5c",
+  "High Parental Inv.": "#3a8c5c",
+  "Private School":     "#f0a500",
+  "Public School":      "#f0a500",
+  "Low Income":         "#e05c5c",
+  "No Internet":        "#e05c5c",
+  "Low Resources":      "#e05c5c",
+  "Low Parental Inv.":  "#e05c5c",
+};
+
+const W = 820, H = 480;
+const PAD = { top: 20, bottom: 30, left: 30, right: 30 };
+const NODE_W = 18, NODE_GAP = 10;
+
+const svg = d3.select("#chart").attr("width", W).attr("height", H);
+const tooltip = d3.select("#tooltip");
+
+// column x positions
+const colX = [PAD.left + 60, W / 2 - NODE_W / 2, W - PAD.right - 60 - NODE_W];
+
+function buildSankey(links) {
+  // collect all node names present in this dataset
+  const names = [...new Set(links.flatMap(d => [d.source, d.target]))];
+
+  // compute total flow per node
+  const nodeTotal = {};
+  names.forEach(n => nodeTotal[n] = 0);
+  links.forEach(d => {
+    nodeTotal[d.source] = (nodeTotal[d.source] || 0) + d.value;
+    nodeTotal[d.target] = (nodeTotal[d.target] || 0) + d.value;
+  });
+
+  // group nodes by column
+  const cols = { 0: [], 1: [], 2: [] };
+  names.forEach(n => {
+    const c = COL[n] ?? 0;
+    if (cols[c]) cols[c].push(n);
+  });
+
+  // sort each column: advantages first, disadvantages after; by total descending
+  const sortVal = n => -(nodeTotal[n] || 0);
+  [0, 1, 2].forEach(c => cols[c].sort((a, b) => sortVal(a) - sortVal(b)));
+
+  // assign y positions per column
+  const usableH = H - PAD.top - PAD.bottom;
+  const nodePos = {}; // name -> { x, y, height }
+
+  [0, 1, 2].forEach(c => {
+    const nodes = cols[c];
+    const totalFlow = d3.sum(nodes, n => nodeTotal[n]);
+    const totalGap = NODE_GAP * (nodes.length - 1);
+    const scale = (usableH - totalGap) / (totalFlow || 1);
+    let y = PAD.top;
+    nodes.forEach(n => {
+      const h = Math.max(4, (nodeTotal[n] || 0) * scale);
+      nodePos[n] = { x: colX[c], y, height: h };
+      y += h + NODE_GAP;
+    });
+  });
+
+  return { nodePos, nodeTotal, cols };
+}
+
+function draw(links) {
+  svg.selectAll("*").remove();
+
+  const { nodePos, nodeTotal } = buildSankey(links);
+
+  // track current y offset for stacking flows out/in of each node
+  const outOffset = {}, inOffset = {};
+  Object.keys(nodePos).forEach(n => { outOffset[n] = 0; inOffset[n] = 0; });
+
+  const maxVal = d3.max(links, d => d.value);
+
+  // draw flows
+  links.forEach(d => {
+    const s = nodePos[d.source], t = nodePos[d.target];
+    if (!s || !t) return;
+
+    const sTotal = nodeTotal[d.source], tTotal = nodeTotal[d.target];
+    const sH = s.height * (d.value / sTotal);
+    const tH = t.height * (d.value / tTotal);
+
+    const y0a = s.y + outOffset[d.source];
+    const y0b = y0a + sH;
+    const y1a = t.y + inOffset[d.target];
+    const y1b = y1a + tH;
+
+    outOffset[d.source] += sH;
+    inOffset[d.target]  += tH;
+
+    const x0 = s.x + NODE_W, x1 = t.x;
+    const mx = (x0 + x1) / 2;
+
+    // gradient color: source color on left side
+    const srcColor = NODE_COLOR[d.source] || "#aaa";
+    const tgtColor = NODE_COLOR[d.target] || "#aaa";
+
+    const gradId = `g_${d.source}_${d.target}`.replace(/[^a-zA-Z0-9_]/g, "_");
+    const defs = svg.append("defs");
+    const grad = defs.append("linearGradient")
+      .attr("id", gradId).attr("x1", "0%").attr("x2", "100%");
+    grad.append("stop").attr("offset", "0%").attr("stop-color", srcColor).attr("stop-opacity", 0.45);
+    grad.append("stop").attr("offset", "100%").attr("stop-color", tgtColor).attr("stop-opacity", 0.45);
+
+    const path = `M${x0},${y0a} C${mx},${y0a} ${mx},${y1a} ${x1},${y1a}
+                  L${x1},${y1b} C${mx},${y1b} ${mx},${y0b} ${x0},${y0b} Z`;
+
+    svg.append("path")
+      .attr("d", path)
+      .attr("fill", `url(#${gradId})`)
+      .attr("stroke", "none")
+      .style("cursor", "pointer")
+      .on("mouseover", function(event) {
+        d3.select(this).attr("fill-opacity", 1).attr("fill", srcColor);
+        tooltip.style("opacity", 1)
+          .html(`<strong>${d.source}</strong> ↔ <strong>${d.target}</strong><br/>Students: <strong>${d.value.toLocaleString()}</strong>`);
+      })
+      .on("mousemove", function(event) {
+        tooltip.style("left", (event.clientX + 14) + "px").style("top", (event.clientY - 32) + "px");
+      })
+      .on("mouseout", function() {
+        d3.select(this).attr("fill", `url(#${gradId})`).attr("fill-opacity", 1);
+        tooltip.style("opacity", 0);
+      });
+  });
+
+  // draw nodes
+  Object.entries(nodePos).forEach(([name, pos]) => {
+    svg.append("rect")
+      .attr("x", pos.x).attr("y", pos.y)
+      .attr("width", NODE_W).attr("height", pos.height)
+      .attr("fill", NODE_COLOR[name] || "#aaa")
+      .attr("rx", 3);
+
+    // label: left col labels on left, right col on right, middle centered
+    const col = COL[name];
+    const labelX = col === 0 ? pos.x - 6
+                 : col === 2 ? pos.x + NODE_W + 6
+                 : pos.x + NODE_W / 2;
+    const anchor = col === 0 ? "end" : col === 2 ? "start" : "middle";
+    const labelY = pos.y + pos.height / 2;
+
+    svg.append("text")
+      .attr("x", labelX).attr("y", labelY)
+      .attr("dy", "0.35em")
+      .attr("text-anchor", anchor)
+      .attr("font-size", 11)
+      .attr("font-family", "Georgia, serif")
+      .attr("fill", "#222")
+      .text(name);
+  });
+
+  // column headers
+  const headers = [
+    { x: colX[0] + NODE_W / 2, label: "Advantage Factors", anchor: "middle" },
+    { x: colX[1] + NODE_W / 2, label: "School Type",       anchor: "middle" },
+    { x: colX[2] + NODE_W / 2, label: "Disadvantage Factors", anchor: "middle" },
+  ];
+  headers.forEach(h => {
+    svg.append("text")
+      .attr("x", h.x).attr("y", PAD.top - 8)
+      .attr("text-anchor", h.anchor)
+      .attr("font-size", 11.5)
+      .attr("font-family", "Georgia, serif")
+      .attr("fill", "#888")
+      .attr("font-style", "italic")
+      .text(h.label);
+  });
+}
+
+draw(raw.high);
+
+window.update = function(group) {
+  draw(raw[group]);
+  d3.select("#btn-high").classed("active", group === "high");
+  d3.select("#btn-low").classed("active", group === "low");
+};
+</script>
+</body>
+</html>
